@@ -1,88 +1,573 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <link rel="stylesheet" href="./static/css/styles.css" />
-        <meta
-            http-equiv="Content-Security-Policy"
-            content="default-src * 'unsafe-inline' 'unsafe-eval'"
-        />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Tauri App</title>
-        <script src="./static/js/main.js"></script>
-    </head>
-    <body>
-        <main class="container">
-            <h1>Welcome to TauriMan</h1>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>拾光记 - 珍藏纪念日</title>
+    <link rel="icon" type="image/svg+xml" href="./icon.svg" />
+    <link rel="apple-touch-icon" href="./icon.svg" />
+    
+    <!-- 错误处理 -->
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        if(message.includes('ResizeObserver')) return;
+        var errorDiv = document.getElementById('app-error-display');
+        if (!errorDiv) {
+          errorDiv = document.createElement('div');
+          errorDiv.id = 'app-error-display';
+          Object.assign(errorDiv.style, {
+            position: 'fixed', top: '0', left: '0', width: '100%', padding: '20px',
+            background: '#fee2e2', color: '#991b1b', zIndex: '9999',
+            fontFamily: 'monospace', fontSize: '12px', whiteSpace: 'pre-wrap'
+          });
+          document.body.appendChild(errorDiv);
+        }
+        errorDiv.textContent += 'Error: ' + message + '\nLine: ' + lineno + '\n\n';
+      };
+    </script>
 
-            <div class="row">
-                <a
-                    href="https://tauri.app"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    <img
-                        src="./assets/tauri.svg"
-                        class="logo tauri"
-                        alt="Tauri logo"
-                    />
-                </a>
-                <a
-                    href="https://pakeplus.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    <img
-                        src="https://hk.gh-proxy.org/https://github.com/Sjj1024/PakePlus/blob/main/app-icon.png"
-                        class="logo vanilla"
-                        alt="JavaScript logo"
-                    />
-                </a>
+    <!-- 样式库 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              primary: '#FF7E67',
+              secondary: '#4A90E2',
+              accent: '#FFD700',
+              background: '#F9FAFB',
+            },
+            fontFamily: {
+              serif: ['"Noto Serif SC"', '"Songti SC"', 'serif'],
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body { background-color: #F9FAFB; -webkit-tap-highlight-color: transparent; }
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-5px); }
+      }
+      .animate-float { animation: float 3s ease-in-out infinite; }
+    </style>
+    
+    <!-- Babel 编译器 -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- 依赖库映射 (已移除 @google/genai) -->
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body>
+    <div id="root"></div>
+
+    <!-- 单文件逻辑开始 -->
+    <script type="text/babel" data-type="module">
+      import React, { useState, useEffect, useMemo } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import { 
+        Trash2, Edit2, CalendarHeart, Cake, Star, 
+        X, Save, PenLine, Plus, Download, Search, 
+        AlertTriangle, Info, Heart
+      } from 'lucide-react';
+
+      // --- Types ---
+      const EventType = {
+        BIRTHDAY: 'BIRTHDAY',
+        ANNIVERSARY: 'ANNIVERSARY',
+        OTHER: 'OTHER'
+      };
+
+      // --- Utils ---
+      const getDaysUntil = (dateString) => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const currentYear = today.getFullYear();
+        const [year, month, day] = dateString.split('-').map(Number);
+        let nextEventDate = new Date(currentYear, month - 1, day);
+        if (nextEventDate.getTime() < today.getTime()) {
+          nextEventDate = new Date(currentYear + 1, month - 1, day);
+        }
+        const diffTime = nextEventDate.getTime() - today.getTime();
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+      };
+
+      const formatDate = (dateString) => {
+        const parts = dateString.split('-');
+        return `${parts[1]}月${parts[2]}日`;
+      };
+
+      const getAgeOrYears = (dateString) => {
+        const today = new Date();
+        const [year] = dateString.split('-').map(Number);
+        return today.getFullYear() - year;
+      };
+
+      const getEventTypeLabel = (type) => {
+        switch (type) {
+          case EventType.BIRTHDAY: return '生日';
+          case EventType.ANNIVERSARY: return '纪念日';
+          case EventType.OTHER: return '其他';
+          default: return '事件';
+        }
+      };
+
+      // --- Notification Service ---
+      const checkAndSendNotifications = (events) => {
+        if (!('Notification' in window)) return;
+        
+        // 获取权限
+        if (Notification.permission === 'default') {
+          Notification.requestPermission();
+          return; // 第一次请求后下次生效
+        }
+        
+        if (Notification.permission !== 'granted') return;
+
+        const todayStr = new Date().toDateString();
+        const logKey = 'memorykeeper_notification_log';
+        let log = { date: todayStr, sentIds: [] };
+        
+        try {
+          const savedLog = JSON.parse(localStorage.getItem(logKey));
+          if (savedLog && savedLog.date === todayStr) {
+            log = savedLog;
+          }
+        } catch (e) {}
+
+        events.forEach(event => {
+          const days = getDaysUntil(event.date);
+          
+          // 逻辑：如果是今天(0)或者三天后(3)，且今天还没提醒过
+          if ((days === 0 || days === 3) && !log.sentIds.includes(event.id)) {
+             let title = "拾光记温馨提醒";
+             let body = "";
+             
+             if (days === 0) {
+               title = `今天是 ${event.name}！`;
+               body = `祝 ${event.name} 节日快乐！`;
+             } else {
+               body = `${event.name} 将在 3 天后到来，请提前准备。`;
+             }
+
+             // 发送通知
+             new Notification(title, {
+               body: body,
+               icon: './icon.svg',
+               tag: event.id
+             });
+
+             log.sentIds.push(event.id);
+          }
+        });
+
+        localStorage.setItem(logKey, JSON.stringify(log));
+      };
+
+      const exportToCSV = (events) => {
+        const headers = ['姓名/标题', '日期', '类型', '倒计时(天)', '备注'];
+        const rows = events.map(e => [
+          e.name,
+          e.date,
+          getEventTypeLabel(e.type),
+          getDaysUntil(e.date).toString(),
+          e.notes || ''
+        ]);
+        const csvContent = [headers.join(','), ...rows.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(','))].join('\n');
+        const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `亲友纪念日_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      const exportToTXT = (events) => {
+        let content = "=== 亲友纪念日清单 ===\n\n";
+        events.forEach(e => {
+          const days = getDaysUntil(e.date);
+          content += `【${e.name}】 - ${getEventTypeLabel(e.type)}\n`;
+          content += `日期: ${e.date} (每年 ${formatDate(e.date)})\n`;
+          content += `状态: 还有 ${days} 天\n`;
+          if (e.notes) content += `备注: ${e.notes}\n`;
+          content += "------------------------\n";
+        });
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `亲友纪念日_${new Date().toISOString().split('T')[0]}.txt`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      // --- Components ---
+
+      const AboutModal = ({ isOpen, onClose }) => {
+        if (!isOpen) return null;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm animate-in fade-in">
+             <div className="bg-white rounded-3xl w-full max-w-sm shadow-2xl overflow-hidden relative animate-in zoom-in-95">
+                <div className="bg-gradient-to-br from-indigo-500 to-purple-600 p-8 text-white text-center relative">
+                   <button onClick={onClose} className="absolute top-4 right-4 p-1.5 bg-white/20 hover:bg-white/30 rounded-full transition-colors"><X className="w-5 h-5" /></button>
+                   <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 backdrop-blur-md">
+                     <Heart className="w-8 h-8 text-white fill-white" />
+                   </div>
+                   <h2 className="text-2xl font-bold font-serif">关于拾光记</h2>
+                   <p className="text-indigo-100 text-sm mt-1">版本 1.2.0 (Lite)</p>
+                </div>
+                <div className="p-6">
+                   <div className="space-y-4">
+                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">开发者</p>
+                        <p className="text-gray-800 font-medium text-lg">josshanka</p>
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                        <p className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-1">开发初衷</p>
+                        <p className="text-gray-700 italic leading-relaxed">
+                          “希望不要再错过重要的日子。”
+                        </p>
+                        <p className="text-gray-600 text-sm mt-2 leading-relaxed">
+                          生活匆忙，但爱与记忆不该被遗忘。做这个小应用，是为了在特殊的日子到来前，给我们一份温暖的提醒。
+                        </p>
+                      </div>
+                   </div>
+                   <div className="mt-6 text-center text-xs text-gray-400">
+                      © 2024 Memory Keeper. All rights reserved.
+                   </div>
+                </div>
+             </div>
+          </div>
+        )
+      }
+
+      const ConfirmModal = ({ isOpen, onClose, onConfirm, title, message }) => {
+        if (!isOpen) return null;
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/30 backdrop-blur-sm transition-opacity" onClick={onClose}></div>
+            <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative z-10 animate-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4 mx-auto">
+                <AlertTriangle className="w-6 h-6 text-red-500" />
+              </div>
+              <h3 className="text-xl font-bold text-center text-gray-900 mb-2">{title}</h3>
+              <p className="text-center text-gray-500 mb-8 leading-relaxed">{message}</p>
+              <div className="flex gap-3">
+                <button onClick={onClose} className="flex-1 py-3 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold rounded-xl transition-colors">取消</button>
+                <button onClick={() => { onConfirm(); onClose(); }} className="flex-1 py-3 px-4 bg-red-500 hover:bg-red-600 text-white font-bold rounded-xl shadow-lg shadow-red-500/30 transition-all">确认删除</button>
+              </div>
             </div>
-            <p>Click to get data</p>
-            <form class="row" id="greet-form">
-                <input id="greet-input" placeholder="Enter a name..." />
-                <button type="submit" id="getdata">GET DATA</button>
-            </form>
-            <div class="functions">
-                <a href="./book.html" target="_self">跳转到book.html</a>
-                <a
-                    href="https://www.baidu.com"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    >跳到百度blank
-                </a>
-                <a
-                    href="https://www.baidu.com"
-                    target="_self"
-                    rel="noopener noreferrer"
-                >
-                    跳到百度self
-                </a>
-                <button onclick="sayHello()">点击我</button>
-                <button onclick="sayHello()">下载文件</button>
-                <button onclick="sayHello()">上传文件</button>
-                <button onclick="sayHello()">访问相机</button>
-                <button onclick="sayHello()">访问麦克风</button>
-                <button onclick="sayHello()">访问相册</button>
-                <button class="btn" onclick="openWechat()">打开微信</button>
-                <button class="btn" onclick="openWechatScan()">
-                    打开扫一扫
+          </div>
+        );
+      };
+
+      const EventForm = ({ initialData, onSave, onClose, isOpen }) => {
+        const [name, setName] = useState('');
+        const [date, setDate] = useState('');
+        const [type, setType] = useState(EventType.BIRTHDAY);
+        const [notes, setNotes] = useState('');
+        const [isClosing, setIsClosing] = useState(false);
+
+        useEffect(() => {
+          if (isOpen) {
+            if (initialData) {
+              setName(initialData.name);
+              setDate(initialData.date);
+              setType(initialData.type);
+              setNotes(initialData.notes || '');
+            } else {
+              setName('');
+              setDate(new Date().toISOString().split('T')[0]);
+              setType(EventType.BIRTHDAY);
+              setNotes('');
+            }
+            setIsClosing(false);
+          }
+        }, [initialData, isOpen]);
+
+        const handleClose = () => {
+          setIsClosing(true);
+          setTimeout(() => { onClose(); setIsClosing(false); }, 200);
+        };
+
+        if (!isOpen) return null;
+
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          if (!name || !date) return;
+          onSave({ name, date, type, notes });
+          handleClose();
+        };
+
+        return (
+          <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 transition-opacity duration-300 ${isClosing ? 'opacity-0' : 'opacity-100'}`}>
+            <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={handleClose}></div>
+            <div className={`bg-white rounded-3xl w-full max-w-md shadow-2xl overflow-hidden relative z-10 transform transition-all duration-300 ${isClosing ? 'scale-95 translate-y-4' : 'scale-100 translate-y-0'} animate-in fade-in zoom-in-95`}>
+              <div className="bg-gradient-to-br from-primary via-orange-400 to-orange-300 p-6 text-white relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-10 -mt-10 blur-xl"></div>
+                <div className="relative z-10 flex justify-between items-center">
+                  <div>
+                    <h2 className="text-xl font-bold font-serif tracking-wide">{initialData ? '编辑时光' : '记录美好'}</h2>
+                    <p className="text-orange-50 text-xs mt-1 opacity-90">珍藏每一个重要的日子</p>
+                  </div>
+                  <button onClick={handleClose} className="p-2 bg-white/20 hover:bg-white/30 rounded-full transition-colors backdrop-blur-md"><X className="w-5 h-5 text-white" /></button>
+                </div>
+              </div>
+              <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                <div className="group">
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">标题 / 姓名</label>
+                  <input type="text" required value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：妈妈生日" className="w-full px-5 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-gray-800 placeholder-gray-400 focus:bg-white focus:border-primary/30 focus:ring-4 focus:ring-primary/10 outline-none transition-all duration-200" />
+                </div>
+                <div className="grid grid-cols-1 gap-6">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">选择日期</label>
+                    <input type="date" required value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-5 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-gray-800 focus:bg-white focus:border-primary/30 focus:ring-4 focus:ring-primary/10 outline-none transition-all duration-200" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">事件类型</label>
+                    <div className="grid grid-cols-3 gap-3">
+                      {[
+                        { value: EventType.BIRTHDAY, label: '生日', icon: <Cake className="w-4 h-4"/> },
+                        { value: EventType.ANNIVERSARY, label: '纪念日', icon: <CalendarHeart className="w-4 h-4"/> },
+                        { value: EventType.OTHER, label: '其他', icon: <PenLine className="w-4 h-4"/> }
+                      ].map((opt) => (
+                        <button type="button" key={opt.value} onClick={() => setType(opt.value)} className={`flex flex-col items-center justify-center gap-1 py-3 rounded-2xl border transition-all duration-200 ${type === opt.value ? 'bg-primary text-white border-primary shadow-lg shadow-primary/30 transform scale-105' : 'bg-white text-gray-500 border-gray-100 hover:bg-gray-50 hover:border-gray-200'}`}>
+                          {opt.icon}
+                          <span className="text-xs font-medium">{opt.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 ml-1">备注 (选填)</label>
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="写点什么..." rows={3} className="w-full px-5 py-3 bg-gray-50 border border-gray-100 rounded-2xl text-gray-800 placeholder-gray-400 focus:bg-white focus:border-primary/30 focus:ring-4 focus:ring-primary/10 outline-none transition-all duration-200 resize-none" />
+                </div>
+                <button type="submit" className="w-full py-4 bg-gray-900 hover:bg-black text-white rounded-2xl font-bold text-lg shadow-xl shadow-gray-900/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-4">
+                  <Save className="w-5 h-5" /> 保存记录
                 </button>
-                <button class="btn" onclick="openZhihu()">打开知乎</button>
-                <button onclick="sayHello()">打开抖音</button>
-                <button onclick="sayHello()">用浏览器打开</button>
-                <button>打开知乎</button>
+              </form>
             </div>
-            <p id="greet-msg"></p>
-            <img src="./static/image/cursor.jpeg" alt="logo" />
-            <video
-                src="https://hk.gh-proxy.org/https://github.com/Sjj1024/PakePlus/blob/main/docs/static/videos/pakeplus.mp4"
-                autoplay
-                controls
-                style="width: 100%; height: 100%"
-            ></video>
-            <audio src="./static/music/yin.mp3" controls></audio>
-        </main>
-    </body>
+          </div>
+        );
+      };
+
+      const EventCard = ({ event, onEdit, onDelete }) => {
+        const daysUntil = getDaysUntil(event.date);
+        const years = getAgeOrYears(event.date);
+
+        let icon = <Star className="w-5 h-5 text-yellow-500" />;
+        let bgColor = "bg-white";
+        let borderColor = "border-gray-200";
+
+        if (event.type === EventType.BIRTHDAY) {
+          icon = <Cake className="w-5 h-5 text-primary" />;
+          bgColor = "bg-orange-50";
+          borderColor = "border-orange-100";
+        } else if (event.type === EventType.ANNIVERSARY) {
+          icon = <CalendarHeart className="w-5 h-5 text-secondary" />;
+          bgColor = "bg-blue-50";
+          borderColor = "border-blue-100";
+        }
+
+        const isUrgent = daysUntil <= 7;
+
+        return (
+          <div className={`relative p-4 mb-3 rounded-xl border ${borderColor} ${bgColor} shadow-sm transition-all hover:shadow-md`}>
+            <div className="flex justify-between items-start">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-white rounded-full shadow-sm">{icon}</div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-lg">{event.name}</h3>
+                  <p className="text-sm text-gray-500">
+                    {formatDate(event.date)} · {getEventTypeLabel(event.type)}
+                    {event.type === EventType.BIRTHDAY && ` · ${years}岁`}
+                    {event.type === EventType.ANNIVERSARY && ` · ${years}周年`}
+                  </p>
+                </div>
+              </div>
+              <div className={`flex flex-col items-end`}>
+                 <span className={`text-2xl font-bold ${isUrgent ? 'text-primary' : 'text-gray-700'}`}>{daysUntil}</span>
+                 <span className="text-xs text-gray-500">天后</span>
+              </div>
+            </div>
+            {event.notes && (
+              <div className="mt-3 text-sm text-gray-600 bg-white/60 p-2 rounded-md">{event.notes}</div>
+            )}
+            <div className="mt-4 flex gap-2 justify-end border-t border-gray-200/50 pt-3">
+              <div className="flex-1"></div>
+              <button onClick={() => onEdit(event)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"><Edit2 className="w-4 h-4" /></button>
+              <button onClick={() => onDelete(event.id)} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-4 h-4" /></button>
+            </div>
+          </div>
+        );
+      };
+
+      // --- Main App ---
+
+      const App = () => {
+        const [events, setEvents] = useState([]);
+        const [searchTerm, setSearchTerm] = useState('');
+        const [filterType, setFilterType] = useState('ALL');
+        
+        const [isFormOpen, setIsFormOpen] = useState(false);
+        const [editingEvent, setEditingEvent] = useState(undefined);
+        const [deleteId, setDeleteId] = useState(null);
+        const [showExportMenu, setShowExportMenu] = useState(false);
+        const [showAbout, setShowAbout] = useState(false);
+
+        useEffect(() => {
+          const saved = localStorage.getItem('memorykeeper_events');
+          if (saved) {
+            try { setEvents(JSON.parse(saved)); } catch (e) { console.error(e); }
+          } else {
+            const seed = [
+              { id: '1', name: '示例: 妈妈生日', date: '1975-05-20', type: EventType.BIRTHDAY, notes: '喜欢花' },
+              { id: '2', name: '示例: 结婚纪念日', date: '2020-10-01', type: EventType.ANNIVERSARY, notes: '三周年' }
+            ];
+            setEvents(seed);
+            localStorage.setItem('memorykeeper_events', JSON.stringify(seed));
+          }
+          
+          if ('Notification' in window && Notification.permission === 'default') {
+             // Notification permission check logic maintained
+          }
+        }, []);
+
+        useEffect(() => {
+          if (events.length > 0) {
+            localStorage.setItem('memorykeeper_events', JSON.stringify(events));
+            checkAndSendNotifications(events);
+          }
+        }, [events]);
+
+        const handleSaveEvent = (data) => {
+          if (editingEvent) {
+            setEvents(prev => prev.map(e => e.id === editingEvent.id ? { ...data, id: editingEvent.id } : e));
+          } else {
+            setEvents(prev => [...prev, { ...data, id: crypto.randomUUID() }]);
+          }
+          setEditingEvent(undefined);
+        };
+
+        const confirmDeleteEvent = (id) => setDeleteId(id);
+        const handleExecuteDelete = () => {
+          if (deleteId) {
+            setEvents(prev => prev.filter(e => e.id !== deleteId));
+            setDeleteId(null);
+          }
+        };
+        const handleEditEvent = (event) => { setEditingEvent(event); setIsFormOpen(true); };
+
+        const filteredEvents = useMemo(() => {
+          return events
+            .filter(e => {
+              const matchesSearch = e.name.toLowerCase().includes(searchTerm.toLowerCase());
+              const matchesType = filterType === 'ALL' || e.type === filterType;
+              return matchesSearch && matchesType;
+            })
+            .sort((a, b) => getDaysUntil(a.date) - getDaysUntil(b.date));
+        }, [events, searchTerm, filterType]);
+
+        return (
+          <div className="min-h-screen pb-24 max-w-lg mx-auto bg-gray-50 shadow-2xl relative">
+            <header className="bg-white sticky top-0 z-10 px-6 py-4 shadow-sm">
+              <div className="flex justify-between items-center mb-4">
+                <h1 className="text-2xl font-bold text-gray-800 tracking-wide font-serif">拾光<span className="text-primary">记</span></h1>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowAbout(true)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                    <Info className="w-5 h-5 text-gray-600" />
+                  </button>
+                  <div className="relative">
+                    <button onClick={() => setShowExportMenu(!showExportMenu)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors">
+                      <Download className="w-5 h-5 text-gray-600" />
+                    </button>
+                    {showExportMenu && (
+                      <div className="absolute right-0 top-12 bg-white rounded-xl shadow-xl border border-gray-100 p-2 w-40 z-20 animate-in fade-in zoom-in-95 duration-100">
+                        <button onClick={() => { exportToCSV(events); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 hover:bg-gray-50 rounded-lg text-sm text-gray-700">导出 Excel (CSV)</button>
+                        <button onClick={() => { exportToTXT(events); setShowExportMenu(false); }} className="w-full text-left px-4 py-2 hover:bg-gray-50 rounded-lg text-sm text-gray-700">导出文本 (TXT)</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-2.5 w-4 h-4 text-gray-400" />
+                  <input type="text" placeholder="搜索亲友..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-gray-100 rounded-lg text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+                </div>
+                <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="bg-gray-100 rounded-lg text-sm px-3 py-2 text-gray-600 outline-none focus:ring-2 focus:ring-primary/20">
+                  <option value="ALL">全部</option>
+                  <option value={EventType.BIRTHDAY}>生日</option>
+                  <option value={EventType.ANNIVERSARY}>纪念日</option>
+                  <option value={EventType.OTHER}>其他</option>
+                </select>
+              </div>
+            </header>
+
+            <div className="px-6 py-4">
+              <div className="bg-gradient-to-r from-primary to-orange-400 rounded-2xl p-5 text-white shadow-lg shadow-primary/20 animate-float">
+                <div className="flex justify-between items-end">
+                  <div>
+                    <p className="text-white/80 text-sm font-medium mb-1">即将到来</p>
+                    <h2 className="text-3xl font-bold">{filteredEvents.length > 0 ? filteredEvents[0].name : '暂无'}</h2>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-4xl font-bold">{filteredEvents.length > 0 ? getDaysUntil(filteredEvents[0].date) : '-'}</span>
+                    <span className="text-sm opacity-80 ml-1">天</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-4 space-y-2">
+              {filteredEvents.length === 0 ? (
+                <div className="text-center py-20 text-gray-400">
+                  <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4"><CalendarHeart className="w-8 h-8 text-gray-300" /></div>
+                  <p>还没有记录哦</p>
+                  <p className="text-sm mt-2">点击右下角按钮添加</p>
+                </div>
+              ) : (
+                filteredEvents.map(event => (
+                  <EventCard key={event.id} event={event} onEdit={handleEditEvent} onDelete={confirmDeleteEvent} />
+                ))
+              )}
+            </div>
+
+            <button onClick={() => { setEditingEvent(undefined); setIsFormOpen(true); }} className="fixed bottom-6 right-6 w-14 h-14 bg-gray-900 text-white rounded-full shadow-2xl flex items-center justify-center hover:scale-105 active:scale-95 transition-all z-40">
+              <Plus className="w-7 h-7" />
+            </button>
+
+            <EventForm isOpen={isFormOpen} onClose={() => setIsFormOpen(false)} onSave={handleSaveEvent} initialData={editingEvent} />
+            <ConfirmModal isOpen={!!deleteId} onClose={() => setDeleteId(null)} onConfirm={handleExecuteDelete} title="删除确认" message="确定要删除这条记录吗？删除后将无法恢复。" />
+            <AboutModal isOpen={showAbout} onClose={() => setShowAbout(false)} />
+          </div>
+        );
+      };
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
 </html>
